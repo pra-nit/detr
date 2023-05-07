@@ -13,6 +13,7 @@ from typing import Optional, List
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
+from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 
 class Transformer(nn.Module):
@@ -129,7 +130,8 @@ class TransformerEncoderLayer(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        # self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.self_attn = GPSA(d_model,nhead , attn_drop = dropout)
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
@@ -189,8 +191,11 @@ class TransformerDecoderLayer(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        # self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        # self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.self_attn = GPSA(d_model,nhead , attn_drop = dropout)
         self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
@@ -267,6 +272,115 @@ class TransformerDecoderLayer(nn.Module):
                                     tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
         return self.forward_post(tgt, memory, tgt_mask, memory_mask,
                                  tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
+
+class GPSA(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.,
+                 locality_strength=1., use_local_init=True):
+        super().__init__()
+        self.num_heads = num_heads
+        self.dim = dim
+        head_dim = dim // num_heads
+        self.scale = qk_scale or head_dim ** -0.5
+
+        self.q = nn.Linear(dim, dim, bias=qkv_bias)
+        self.k = nn.Linear(dim, dim, bias= qkv_bias)       
+        self.v = nn.Linear(dim, dim, bias=qkv_bias)       
+        
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.pos_proj = nn.Linear(3, num_heads)
+        self.proj_drop = nn.Dropout(proj_drop)
+        self.locality_strength = locality_strength
+        self.gating_param = nn.Parameter(torch.ones(self.num_heads))
+        self.apply(self._init_weights)
+        if use_local_init:
+            self.local_init(locality_strength=locality_strength)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+        
+    def forward(self, query,key,value, attn_mask = None, key_padding_mask = None):
+        B, N, C = query.shape
+        if not hasattr(self, 'rel_indices') or self.rel_indices.size(1)!=N:
+            self.get_rel_indices(N)
+
+        if key_padding_mask is not None:
+            if attn_mask is not None:
+                attn_mask = attn_mask + key_padding_mask
+            else:
+                attn_mask = key_padding_mask
+        
+        attn = self.get_attention(query,key,attn_mask)
+        v = self.v(value).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        query = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        query = self.proj(query)
+        query = self.proj_drop(query)
+        return query,None
+
+    def get_attention(self, query,key,attn_mask = None):
+        B, N, C = query.shape        
+        q = self.q(query).reshape(B, N,1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
+        bk,nk,ck = key.shape
+        k = self.k(key).reshape(bk,nk,1,self.num_heads,ck // self.num_heads).permute(2,0,3,1,4)[0]
+        
+        pos_score = self.rel_indices.expand(B, -1, -1,-1)
+        pos_score = self.pos_proj(pos_score).permute(0,3,1,2) 
+        patch_score = (q @ k.transpose(-2, -1)) * self.scale
+        patch_score = patch_score.softmax(dim=-1)
+        pos_score = pos_score.softmax(dim=-1)
+        if attn_mask is not None:
+            patch_score = patch_score + attn_mask.expand(1,1,N,B).permute(3,0,2,1)
+        
+        gating = self.gating_param.view(1,-1,1,1)
+        attn = (1.-torch.sigmoid(gating)) * patch_score + torch.sigmoid(gating) * pos_score
+        attn /= attn.sum(dim=-1).unsqueeze(-1)
+        attn = self.attn_drop(attn)
+        return attn
+
+    def get_attention_map(self, x, return_map = False):
+
+        attn_map = self.get_attention(x).mean(0) # average over batch
+        distances = self.rel_indices.squeeze()[:,:,-1]**.5
+        dist = torch.einsum('nm,hnm->h', (distances, attn_map))
+        dist /= distances.size(0)
+        if return_map:
+            return dist, attn_map
+        else:
+            return dist
+    
+    def local_init(self, locality_strength=1.):
+        
+        self.v.weight.data.copy_(torch.eye(self.dim))
+        locality_distance = 1 #max(1,1/locality_strength**.5)
+        
+        kernel_size = int(self.num_heads**.5)
+        center = (kernel_size-1)/2 if kernel_size%2==0 else kernel_size//2
+        for h1 in range(kernel_size):
+            for h2 in range(kernel_size):
+                position = h1+kernel_size*h2
+                self.pos_proj.weight.data[position,2] = -1
+                self.pos_proj.weight.data[position,1] = 2*(h1-center)*locality_distance
+                self.pos_proj.weight.data[position,0] = 2*(h2-center)*locality_distance
+        self.pos_proj.weight.data *= locality_strength
+
+    def get_rel_indices(self, num_patches):
+        img_size = int(num_patches**.5)
+        rel_indices   = torch.zeros(1, num_patches, num_patches, 3)
+        ind = torch.arange(img_size).view(1,-1) - torch.arange(img_size).view(-1, 1)
+        indx = ind.repeat(img_size,img_size)
+        indy = ind.repeat_interleave(img_size,dim=0).repeat_interleave(img_size,dim=1)
+        indd = indx**2 + indy**2
+        rel_indices[:,:,:,2] = indd.unsqueeze(0)
+        rel_indices[:,:,:,1] = indy.unsqueeze(0)
+        rel_indices[:,:,:,0] = indx.unsqueeze(0)
+        device = self.q.weight.device
+        self.rel_indices = rel_indices.to(device)
 
 
 def _get_clones(module, N):
