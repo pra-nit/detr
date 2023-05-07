@@ -275,7 +275,7 @@ class TransformerDecoderLayer(nn.Module):
 
 class GPSA(nn.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.,
-                 locality_strength=1., use_local_init=True):
+                 locality_strength=1., use_local_init=False):
         super().__init__()
         self.num_heads = num_heads
         self.dim = dim
@@ -309,14 +309,32 @@ class GPSA(nn.Module):
         B, N, C = query.shape
         if not hasattr(self, 'rel_indices') or self.rel_indices.size(1)!=N:
             self.get_rel_indices(N)
-
-        if key_padding_mask is not None:
-            if attn_mask is not None:
-                attn_mask = attn_mask + key_padding_mask
-            else:
-                attn_mask = key_padding_mask
         
         attn = self.get_attention(query,key,attn_mask)
+        batch_size, seq_len, _ = query.shape
+        merged_mask = None
+        if key_padding_mask is not None:
+                merged_mask = key_padding_mask.view(batch_size, 1, 1, seq_len).expand(-1, self.num_heads, -1, -1)
+                
+        if attn_mask is not None:
+            # In this branch query can't be a nested tensor, so it has a shape
+            
+
+            # Always expands attn_mask to 4D
+            if attn_mask.dim() == 3:
+                attn_mask_expanded = attn_mask.view(batch_size, -1, seq_len, seq_len)
+            else:  # attn_mask.dim() == 2:
+                attn_mask_expanded = attn_mask.view(1, 1, seq_len, seq_len).expand(batch_size, self.num_heads, -1, -1)
+            merged_mask = attn_mask_expanded
+
+            if key_padding_mask is not None:
+                key_padding_mask_expanded = key_padding_mask.view(batch_size, 1, 1, seq_len).expand(-1, self.num_heads, -1, -1)
+                merged_mask = attn_mask_expanded + key_padding_mask_expanded
+            
+
+        if merged_mask is not None:
+            attn = attn + merged_mask
+        
         v = self.v(value).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
         query = (attn @ v).transpose(1, 2).reshape(B, N, C)
         query = self.proj(query)
@@ -326,16 +344,17 @@ class GPSA(nn.Module):
     def get_attention(self, query,key,attn_mask = None):
         B, N, C = query.shape        
         q = self.q(query).reshape(B, N,1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
-        bk,nk,ck = key.shape
-        k = self.k(key).reshape(bk,nk,1,self.num_heads,ck // self.num_heads).permute(2,0,3,1,4)[0]
+        k = self.k(key).reshape(B,N,1,self.num_heads,C // self.num_heads).permute(2,0,3,1,4)[0]
         
         pos_score = self.rel_indices.expand(B, -1, -1,-1)
         pos_score = self.pos_proj(pos_score).permute(0,3,1,2) 
         patch_score = (q @ k.transpose(-2, -1)) * self.scale
         patch_score = patch_score.softmax(dim=-1)
         pos_score = pos_score.softmax(dim=-1)
-        if attn_mask is not None:
-            patch_score = patch_score + attn_mask.expand(1,1,N,B).permute(3,0,2,1)
+        # if attn_mask is not None:
+        #     patch_score = patch_score + attn_mask.expand(1,1,N,B).permute(3,0,2,1)
+        
+        
         
         gating = self.gating_param.view(1,-1,1,1)
         attn = (1.-torch.sigmoid(gating)) * patch_score + torch.sigmoid(gating) * pos_score
