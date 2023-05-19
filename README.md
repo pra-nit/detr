@@ -1,3 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+<!-- HTML Codes by Quackit.com -->
+<title>
+DETR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="keywords" content="Object detection using transformer">
+<meta name="description" content="Prateek Agrawal">
+<style>
+body {background-color:#ffffff;background-repeat:no-repeat;background-position:top left;background-attachment:fixed;}
+h1{font-family:Arial, sans-serif;color:#000000;background-color:#ffffff;}
+p {font-family:Georgia, serif;font-size:14px;font-style:normal;font-weight:normal;color:#000000;background-color:#ffffff;}
+</style>
+</head>
+<body>
+<h1></h1>
+<p>Object detection is a fundamental computer vision problem that involves identifying and localizing objects within an image. Traditional approaches, such as region-based methods, have been widely used, but they often involve complex pipelines and need further post processing.This paper utilizes the DEtection TRansformer[2] framework to achieve accurate and efficient object detection. In this study, the performance of various backbone architectures, namely RegNet[11], ResNet[4], EfficientNet[12] etc. are compared. The RegNet backbone is found to outperform the other backbone architectures in terms of detection accuracy and computational efficiency. The experimental results demonstrate that the RegNet backbone, with its advanced architectural design and optimized resource allocation, enables superior feature extraction and representation, leading to improved object detection performance. The RegNet backbone achieves better mean average precision (mAP), indicating enhanced detection performance. Additionally, the experiment reveals a reduction in training time by approximately 20\% when utilizing the RegNet backbone showing that the combination of a Transformer-based approach and the RegNet backbone not only enhances detection accuracy but also offers a significant reduction in training time. </p>
+</body>
+</html>
+
 **DE⫶TR**: End-to-End Object Detection with Transformers
 ========
 
