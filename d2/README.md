@@ -37,3 +37,5 @@ To fine-tune DETR for instance segmentation on a single node with 8 gpus, simply
 ```
 python train_net.py --config configs/detr_segm_256_6_6_torchvision.yaml --num-gpus 8 MODEL.DETR.FROZEN_WEIGHTS <model_path>
 ```
+Video file :
+<iframe width="853" height="480" src="https://www.youtube.com/embed/605IzwWyO4A" title="Hidden Protagonist | The Big Bang Theory | Comedy Central Africa" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
