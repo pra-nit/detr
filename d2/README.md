@@ -39,3 +39,5 @@ python train_net.py --config configs/detr_segm_256_6_6_torchvision.yaml --num-gp
 ```
 Video file :
 <iframe width="853" height="480" src="https://www.youtube.com/embed/605IzwWyO4A" title="Hidden Protagonist | The Big Bang Theory | Comedy Central Africa" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+
+[![Test](https://img.youtube.com/vi/605IzwWyO4A/0.jpg)](https://www.youtube.com/watch?v=605IzwWyO4A)
