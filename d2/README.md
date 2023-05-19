@@ -40,3 +40,9 @@ python train_net.py --config configs/detr_segm_256_6_6_torchvision.yaml --num-gp
 Video file :
 
 [![Test](https://img.youtube.com/vi/3NawzlSevKg/0.jpg)](https://www.youtube.com/watch?v=3NawzlSevKg)
+
+
+https://github.com/pra-nit/detr/assets/102783641/8e10e901-33c2-416e-b995-888d2b9a03b9
+
+
+
